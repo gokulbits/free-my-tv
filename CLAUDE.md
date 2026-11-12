@@ -325,7 +325,7 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
 - Continue Watching gets `READ_TV_LISTINGS` with `pm grant` through the TV's own ADB only when picked in Home Settings;
   *Original* revokes it with `pm revoke`. Watch Next pictures load only from the TV (`content://`, `android.resource://`),
   never from the network. The app talks only to TMDB, Open-Meteo, Binance, Watchmode (with a `watchmode_key`), your Plex
-  server (with a `plex_url`), your Immich server (with `immich_server` and its key), Trakt (with a `trakt_client_id`,
+  server (with a `plex_url`), your Jellyfin server (with `jellyfin_url` and its key), your Immich server (with `immich_server` and its key), Trakt (with a `trakt_client_id`,
   once the person signs in on the TV) and GitHub's releases (Updates): new sources (such as Stremio) must not add
   network calls without the owner's OK.
 - Trakt (`Trakt`, Google TV only) needs the person's own API app: `trakt_client_id` (the Client ID only: device code
@@ -359,6 +359,15 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   at `Photos.MAX` the oldest of Immich's make room (`-immich.jpg` names), a new source's photos replace the previous
   one's as they arrive, and `tools/photos.py`'s are never touched. Redirects are never followed (`x-api-key` would go
   along to another host).
+- `Jellyfin` (Google TV only; `jellyfin_url` through `lan_server`, `jellyfin_user`, and `jellyfin_api_key` sent with
+  `tools/send_key.py` to `Secrets`): when the picks' list is made, Resume and Next Up become `PROGRESS` picks (Trakt's
+  tags) and `/Movies/Recommendations`, the shows `Similar` to the last ones watched, or the newest unwatched become
+  `LIKED` ones, with `Pick.jellyfin` set (negative id, key `kind:jf<id>`, so neither Plex's one-per-tab rule nor
+  Watchmode applies). Their images download then, from the server. They open in Wholphin
+  (`com.github.damontecres.wholphin`, `wholphin://view?itemId=…`) when the TV has it, else in Jellyfin's app
+  (`org.jellyfin.androidtv`, VIEW with the bare id to its StartupActivity); neither VIEW filter is BROWSABLE, so
+  `HomeApps.open` names the launch activity. Without any streaming service the list is Jellyfin's alone. No redirects
+  are followed; the key is never logged.
 - Plain HTTP only to the user's own network: `build.sh` reads every server setting with `lan_server <key>` (now
   `immich_server`), which refuses an `http://` address that isn't private (10/8, 172.16/12, 192.168/16, `.local`,
   `.lan`, `.home.arpa`, a one-word name) and lists its host in the generated `network_security_config.xml`, the one

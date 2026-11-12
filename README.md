@@ -19,7 +19,7 @@ Open source. Built with Claude Code. One button to undo.
 
 - **No ads.** No sponsored rows, banners or autoplaying promos. Not one.
 - **Your apps, front and center.** The streaming apps you actually use, on a glass shelf. Pick them and their order right on the TV, or (on Google TV and Android TV) let the one you opened last come first.
-- **Trending, not sponsored.** Three fresh picks every hour (up to six, in Home Settings) from what's trending this week and the latest releases, only from apps you already have, and from the services you choose. The focused one opens wide and the others show their posters. Movies and Shows get their own tabs, and on Google TV your own [Plex library](#your-plex-library-optional) can join in.
+- **Trending, not sponsored.** Three fresh picks every hour (up to six, in Home Settings) from what's trending this week and the latest releases, only from apps you already have, and from the services you choose. The focused one opens wide and the others show their posters. Movies and Shows get their own tabs, and on Google TV your own [Plex library](#your-plex-library-optional) or [Jellyfin library](#your-jellyfin-library-optional) can join in.
 - **Continue Watching** (Google TV and Android TV). *Home Settings* → *Top of the screen* puts what you left halfway in your apps on top, with its progress, and OK picks it up in its app. Or a big clock, or the picks.
 - **Your TMDB key from your phone.** *Home Settings* → *TMDB key* shows a QR code: scan it and paste the key. On LG and Samsung, type it with the remote.
 - **Weather and markets, one press away.** The hour-by-hour forecast (or the next 5 days), sunrise and sunset, and live crypto prices; on LG and Samsung, also rain in the next two hours, the UV index and the air quality.
@@ -160,6 +160,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `tmdb_region` | Your country (two letters): which titles are on which app | `US` |
 | `watchmode_key` | Optional, free [Watchmode](https://api.watchmode.com/) key: a pick opens the title's page in its app. On Google TV and Android TV you can also send it from your phone | empty |
 | `plex_url` and `plex_token` | Optional, your Plex server's `plex.direct` address and token: its newest titles join the picks and open on their page | empty |
+| `jellyfin_url` and `jellyfin_user` | Optional: your [Jellyfin](#your-jellyfin-library-optional) server and whose library: what you're watching and its recommendations join the picks, opening in Wholphin or Jellyfin (Google TV only; the key goes from the computer, not in here) | empty |
 | `trakt_client_id` | Optional: the Client ID of your own free [Trakt](https://trakt.tv/oauth/applications) API app. Home Settings > Picks then gets a Trakt row to sign in with a code, and the picks start with what you're in the middle of, bring in your watchlist and leave out what you've watched. Google TV only | empty |
 | `home_assistant_url`, `home_assistant_entities` | Optional: buttons for your own [Home Assistant](#home-assistant-buttons-optional) in the bottom drawer (Google TV only; the token goes from the computer, not in here) | empty |
 | `latitude`, `longitude` | Your city, for the weather and the sunset | New York |
@@ -254,6 +255,21 @@ This is for Google TV and Android TV, and it needs the TMDB key and at least one
 
 The TV talks to your server directly on your network. If the server can't be reached, the other picks load as usual.
 
+### Your Jellyfin library (optional)
+
+With a [Jellyfin](https://jellyfin.org) server, the picks start with what you're in the middle of and your next episodes ("Continue: S2 E4", "Up next: S2 E5"), then bring in Jellyfin's recommendations: movies like the ones you watched, shows like the ones you're watching last, and the newest you haven't watched while Jellyfin has none. They carry their own poster and backdrop, tagged "Jellyfin". Selecting one opens its page in [Wholphin](https://github.com/damontecres/Wholphin) when the TV has it, otherwise in the official Jellyfin app; one of the two must be installed and signed in to the same server.
+
+This is for Google TV and Android TV, and it needs the TMDB key. It works without any streaming app on the TV: then the picks are only Jellyfin's.
+
+1. In `config.properties`, set `jellyfin_url` to the server's address (`http://192.168.1.20:8096` on your network, or its `https://` address) and `jellyfin_user` to the name you sign in with, then build and install again.
+2. In Jellyfin, *Dashboard → API Keys → +*, name it "Free My TV", and send it to the TV (Android 9 and newer). It asks for the key without showing it, checks it with your server and says whose library the picks will come from:
+
+```bash
+python3 tools/send_key.py <TV IP> jellyfin_api_key
+```
+
+The key stays in the app's private files, never in the APK or `config.properties`; `--remove` takes it off the TV. A user's own access token works too, and then `jellyfin_user` can stay empty. The list is made a few times a day: the key arriving, another `jellyfin_url`, or installing or removing Wholphin makes it again.
+
 ## Going back
 
 On the TV: *Free My TV* → *Home Screen* → *Original*. The factory home screen, screensaver and every app come back exactly as they were. If the new home screen ever crashes three times in five minutes, it switches back by itself.
@@ -320,7 +336,7 @@ It's your code, and Claude Code finds its way around it. Try:
 - **A safety net.** A watchdog in a separate process brings back the stock home screen after three crashes in five minutes, and a boot check keeps your choice after TV updates.
 - **On LG and Samsung, the same design in plain HTML, CSS and JavaScript** ([`web/`](web)), written for the Chromium of older TVs, with no frameworks. [`webos/build.py`](webos/build.py) packs it with `config.properties` into an `.ipk` without LG's tools, and [`webos/install.py`](webos/install.py) installs it through Developer Mode; on LG it lists and opens apps through the TV's own service bus (Luna), as LG's launcher does. [`tizen/build.py`](tizen/build.py) packs the same app into a Samsung `.wgt`, which uses Tizen's web APIs for the apps and the inputs. To preview it on a computer: `python3 webos/build.py --preview`, then open `out/webos/index.html` (a stand-in lists sample apps).
 - **Continue Watching** reads Android TV's Watch Next list (what apps share about what you're watching). Only picking it grants `READ_TV_LISTINGS` through the TV's ADB; *Original* revokes it. Pictures load only from the TV (`content://`, `android.resource://`), never from the network.
-- **Data** comes only from TMDB (trending titles, new releases, the most popular titles when those are few, and which app streams what in your country), Open-Meteo (forecast, sunrise and sunset), optionally Binance (24-hour prices when `show_crypto=true`), optionally Watchmode (the picks' own pages in their apps, with a `watchmode_key`), optionally your Plex server (with a `plex_url`), optionally your Immich server (your photos, with an `immich_server` and its key) and optionally Trakt (what you're watching and your watchlist, with a `trakt_client_id`, once you sign in on the TV).
+- **Data** comes only from TMDB (trending titles, new releases, the most popular titles when those are few, and which app streams what in your country), Open-Meteo (forecast, sunrise and sunset), optionally Binance (24-hour prices when `show_crypto=true`), optionally Watchmode (the picks' own pages in their apps, with a `watchmode_key`), optionally your Plex server (with a `plex_url`), optionally your Jellyfin server (with a `jellyfin_url` and its key), optionally your Immich server (your photos, with an `immich_server` and its key) and optionally Trakt (what you're watching and your watchlist, with a `trakt_client_id`, once you sign in on the TV).
 
 | File | What it is |
 |---|---|

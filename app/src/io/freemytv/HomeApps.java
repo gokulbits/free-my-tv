@@ -642,6 +642,11 @@ final class HomeApps {
                     if ("com.netflix.ninja".equals(it.pkg) && plain != null && plain.getComponent() != null) {
                         intent.setComponent(plain.getComponent()).putExtra("source", "30").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
                     }
+                    // Jellyfin's picks (Jellyfin.link): neither app's VIEW filter is BROWSABLE, so name the activity that
+                    // opens: Wholphin's MainActivity reads wholphin://view?itemId=…, Jellyfin's StartupActivity the bare id.
+                    if ((Jellyfin.WHOLPHIN.equals(it.pkg) || Jellyfin.APP.equals(it.pkg)) && plain != null && plain.getComponent() != null) {
+                        intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri)).setComponent(plain.getComponent());
+                    }
                 }
                 break;
             case LIVE_TV:

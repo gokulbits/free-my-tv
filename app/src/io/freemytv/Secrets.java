@@ -29,8 +29,9 @@ import java.util.List;
 public class Secrets extends ContentProvider {
     /** adb's shell (Process.SHELL_UID, which the SDK only names from Android 10). */
     private static final int SHELL_UID = 2000;
-    static final String IMMICH_KEY = "immich_api_key", HOME_ASSISTANT_TOKEN = "home_assistant_token";
-    private static final List<String> NAMES = Arrays.asList(IMMICH_KEY, HOME_ASSISTANT_TOKEN);
+    static final String IMMICH_KEY = "immich_api_key", HOME_ASSISTANT_TOKEN = "home_assistant_token",
+            JELLYFIN_KEY = "jellyfin_api_key";
+    private static final List<String> NAMES = Arrays.asList(IMMICH_KEY, HOME_ASSISTANT_TOKEN, JELLYFIN_KEY);
 
     private static File file(Context c, String name) {
         return new File(new File(c.getFilesDir(), "secrets"), name);
@@ -43,6 +44,11 @@ public class Secrets extends ContentProvider {
         } catch (IOException e) {
             return "";
         }
+    }
+
+    /** When the key for `name` arrived (ms), 0 for none: a file's date, never its contents (fine on the UI thread). */
+    static long received(Context c, String name) {
+        return file(c, name).lastModified();
     }
 
     @Override public boolean onCreate() {

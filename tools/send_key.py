@@ -15,6 +15,8 @@ arrived (never for the key itself). Android 9 and newer: adb's `content write` i
                    Home Assistant > your profile > Security > Long-lived access tokens (a user of its own that isn't an
                    administrator is safest). Checked against home_assistant_url first, when it's set, with what each of
                    home_assistant_entities becomes on the TV.
+  jellyfin_api_key Jellyfin > Dashboard > API Keys > + (with jellyfin_user set to whose library it is), or a user's
+                   own access token. Checked against jellyfin_url first, when it's set, with whose picks they'll be.
 """
 import getpass
 import json
@@ -28,7 +30,7 @@ import urllib.error
 import urllib.request
 
 URI = 'content://io.freemytv.secrets/'
-NAMES = ('immich_api_key', 'home_assistant_token')
+NAMES = ('immich_api_key', 'home_assistant_token', 'jellyfin_api_key')
 SERIAL = []   # -s <ip>:5555 once connected, so a phone or another TV on adb doesn't get in the way
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -173,7 +175,50 @@ def check_home_assistant(token):
     return None
 
 
-CHECKS = {'immich_api_key': check_immich, 'home_assistant_token': check_home_assistant}
+def check_jellyfin(key):
+    """None if the server takes the key and finds the user (as the TV will: Jellyfin.userId), else why not."""
+    server = prop('jellyfin_url').rstrip('/')
+    if not server:
+        return None
+    opener = urllib.request.build_opener(NoRedirect)
+    auth = ('MediaBrowser Client="Free My TV", Device="TV", DeviceId="io.freemytv", Version="1", '
+            f'Token="{key}"')
+
+    def get(path):
+        req = urllib.request.Request(server + path, headers={'Authorization': auth, 'Accept': 'application/json'})
+        with opener.open(req, timeout=8) as r:
+            return json.load(r)
+
+    name = prop('jellyfin_user')
+    try:
+        get('/System/Info')
+        if name:
+            users = [u for u in get('/Users') if str(u.get('Name', '')).lower() == name.lower()]
+            if not users:
+                return f'Jellyfin has no user named "{name}": set jellyfin_user to the name you sign in with.'
+            user = users[0]['Name']
+        else:
+            try:
+                user = get('/Users/Me')['Name']
+            except urllib.error.HTTPError:
+                return ('This key belongs to no user (an API key): set jellyfin_user in config.properties to whose '
+                        'library the picks come from, then build and install again.')
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return 'Jellyfin refused this key.'
+        if e.code == 403:
+            return 'Jellyfin took the key but won\'t list its users: use an API key from Dashboard > API Keys.'
+        if 300 <= e.code < 400:
+            return f'Jellyfin answered with a redirect ({e.code}): give jellyfin_url the address it moves to.'
+        return f'Jellyfin answered HTTP {e.code}.'
+    except Exception as e:
+        return f'Could not reach {server} from this computer ({e}). Send it anyway with --no-check.'
+    print(f'  The picks will come from {user}\'s Jellyfin library.')
+    return None
+
+
+CHECKS = {'immich_api_key': check_immich, 'home_assistant_token': check_home_assistant,
+          'jellyfin_api_key': check_jellyfin}
 
 
 def main():

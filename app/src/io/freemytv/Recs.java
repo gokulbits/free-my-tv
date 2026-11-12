@@ -57,6 +57,7 @@ final class Recs {
         int mine;               // Trakt: PROGRESS, LIKED (watchlist, recommended) or 0 (TMDB's)
         boolean detailed;
         java.io.File photo;     // one of your own photos (Photos): no title, no caption
+        boolean jellyfin;       // from your Jellyfin server: images from there, opens in Wholphin or Jellyfin's app
     }
 
     interface Listener { void onRecs(); }
@@ -83,9 +84,9 @@ final class Recs {
     /** By subscription, with ads (Pluto TV) or free: never rent or buy. */
     private static final String WATCH_TYPES = "flatrate%7Cads%7Cfree";
     /** Images kept on disk: a backdrop and a poster for every title the list can hold. */
-    private static final int FILES = 2 * (POOL + TRAKT_MAX);
-    /** Pick.mine: what they're in the middle of, and what they'd like (watchlist, Trakt's recommendations). */
-    private static final int PROGRESS = 1, LIKED = 2;
+    private static final int FILES = 2 * (POOL + TRAKT_MAX + Jellyfin.MAX);
+    /** Pick.mine: what they're in the middle of, and what they'd like (watchlist, Trakt's or Jellyfin's recommendations). */
+    static final int PROGRESS = 1, LIKED = 2;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     /** Service name on TMDB (part of the name, lowercase) → TV app (HomeApps key, package). */
     private static final String[][] SERVICES = {
@@ -168,6 +169,7 @@ final class Recs {
         SERVICE_NAME.put("amediateka", "Амедиатека");
         SERVICE_NAME.put("wink", "Wink");
         SERVICE_NAME.put("plex", "Plex");
+        SERVICE_NAME.put("jellyfin", "Jellyfin");
     }
     /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
     static final String REGION = Place.region();
@@ -390,15 +392,20 @@ final class Recs {
     /** Up to `max` in `out`, starting `start` into `from` (wrapping around), one per franchise. */
     private static void take(List<Pick> out, java.util.Set<String> seen, List<Pick> from, long start, int max) {
         boolean plex = false;
-        for (Pick p : out) plex |= p.id < 0;
+        for (Pick p : out) plex |= plex(p);
         for (int i = 0; i < from.size() && out.size() < max; i++) {
             Pick p = from.get((int) ((start + i) % from.size()));
-            if (p.id < 0 && plex) continue;   // a Plex title is the surprise: one per tab, not the movie and the show together
+            if (plex(p) && plex) continue;   // a Plex title is the surprise: one per tab, not the movie and the show together
             if (seen.add(franchise(p.title))) {
                 out.add(p);
-                plex |= p.id < 0;
+                plex |= plex(p);
             }
         }
+    }
+
+    /** Plex's (negative ids, as Jellyfin's, which are no surprise but what you asked for). */
+    private static boolean plex(Pick p) {
+        return p.id < 0 && !p.jellyfin;
     }
 
     /** "Law & Order: Special Victims Unit" → "law & order" (what comes before ":" or " - "). */
@@ -695,7 +702,7 @@ final class Recs {
 
     /** Movies and shows are numbered separately on TMDB: a pick is identified by type + number. */
     static String key(Pick p) {
-        return p.kind + ":" + p.id;
+        return p.jellyfin ? p.kind + ":jf" + p.id : p.kind + ":" + p.id;
     }
 
     private void notifyListeners() {
@@ -735,7 +742,8 @@ final class Recs {
         }
         byName = found;
         writeByName(found);
-        if (services.isEmpty()) throw new IOException(any ? NO_APPS : NO_KNOWN_APPS);
+        // With a Jellyfin server, its picks come even when the TV has none of the streaming services.
+        if (services.isEmpty() && !Jellyfin.configured()) throw new IOException(any ? NO_APPS : NO_KNOWN_APPS);
         // Signed in to Trakt: what they're in the middle of comes first, then their watchlist and Trakt's
         // recommendations; what they've watched stays out. Trakt failing leaves the picks as they'd be without it.
         // The list keeps the account it was made with (0: none, and always outside :home), so a list the screensaver's
@@ -762,6 +770,8 @@ final class Recs {
         // 1. Trending this week (TMDB goes by what people are watching and searching for right now), only what is
         //    on one of the TV's services: the details say where (and are then ready).
         List<Pick> hotMovies = new ArrayList<>(), hotShows = new ArrayList<>();
+        List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
+        if (!services.isEmpty()) {   // none: only Jellyfin's (with no service, TMDB would answer with everything)
         for (String kind : new String[] {"movie", "tv"}) {
             JSONArray hot = get("/trending/" + kind + "/week?language=" + lang()).getJSONArray("results");
             List<Pick> candidates = new ArrayList<>();
@@ -782,7 +792,6 @@ final class Recs {
                 + "&primary_release_date.lte=" + day(0) + common).getJSONArray("results");
         JSONArray shows = get("/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0)
                 + common).getJSONArray("results");
-        List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
         for (int i = 0; i < movies.length(); i++) add(newMovies, movies.getJSONObject(i), "movie");
         for (int i = 0; i < shows.length(); i++) add(newShows, shows.getJSONObject(i), "tv");
         newMovies.removeIf(x -> watched.contains(key(x)));
@@ -797,6 +806,7 @@ final class Recs {
             JSONArray more = get("/discover/tv?vote_count.gte=20" + common).getJSONArray("results");
             for (int i = 0; i < more.length(); i++) add(newShows, more.getJSONObject(i), "tv");
         }
+        }
         // One title of your Plex library per kind (one of the newest 8, another each time the list is made) among the
         // trending ones: a surprise, not half the row. Its images come now, so a server that sleeps later leaves no gray card.
         if (plexOn()) {
@@ -809,6 +819,26 @@ final class Recs {
             }
         } else if (!Config.PLEX_URL.trim().isEmpty()) {
             AppLog.w("plex: plex_url must be an https://….plex.direct address (and plex_token set): ignored");
+        }
+        // Your Jellyfin server: what you're in the middle of and its recommendations, placed as Trakt's; they open in
+        // Wholphin when the TV has it, else in Jellyfin's app. Their images come now, as Plex's. Failing leaves them out.
+        List<Pick> jfProgress = new ArrayList<>(), jfMovies = new ArrayList<>(), jfShows = new ArrayList<>();
+        if (Jellyfin.configured()) {
+            String client = Jellyfin.client(context);
+            if (client == null) {
+                AppLog.w("jellyfin: neither Wholphin nor Jellyfin's app is on the TV: no Jellyfin picks");
+            } else {
+                try {
+                    Jellyfin.Lists jf = Jellyfin.lists(context, client);
+                    jfProgress = withImages(jf.progress);
+                    jfMovies = withImages(jf.movies);
+                    jfShows = withImages(jf.shows);
+                    AppLog.w("jellyfin: " + jfProgress.size() + " in progress, " + (jfMovies.size() + jfShows.size())
+                            + " recommended, opening in " + client);
+                } catch (Exception e) {
+                    AppLog.w("jellyfin: " + e.getMessage());
+                }
+            }
         }
         newMovies.removeIf(x -> watched.contains(key(x)));
         newShows.removeIf(x -> watched.contains(key(x)));
@@ -847,10 +877,12 @@ final class Recs {
         for (Pick x : progress) if (seen.add(key(x))) list.add(x);
         alternate(list, seen, listMovies, listShows, TRAKT_MAX);
         alternate(list, seen, recMovies, recShows, TRAKT_MAX);
+        for (Pick x : jfProgress) if (seen.add(key(x))) list.add(x);
+        alternate(list, seen, jfMovies, jfShows, list.size() + 2 * Jellyfin.RECS_MAX);
         int ours = list.size();
         alternate(list, seen, hotMovies, hotShows, ours + POOL);
         alternate(list, seen, newMovies, newShows, ours + POOL);
-        if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
+        if (list.isEmpty()) throw new IOException(services.isEmpty() ? (any ? NO_APPS : NO_KNOWN_APPS) : "TMDB returned no recommendations");
         picks = list;
         traktStamp = account;
         period = p;
@@ -920,7 +952,7 @@ final class Recs {
                 download(pick);
                 out.add(pick);
             } catch (IOException e) {
-                AppLog.w("plex image: " + e.getMessage());
+                AppLog.w((pick.jellyfin ? "jellyfin" : "plex") + " image: " + e.getMessage());
             }
         }
         return out;
@@ -968,12 +1000,12 @@ final class Recs {
         return false;
     }
 
-    private static String runtime(int minutes) {
+    static String runtime(int minutes) {
         if (minutes <= 0) return null;
         return minutes >= 60 ? Ui.trf("{h}h {m}m", "h", minutes / 60, "m", minutes % 60) : Ui.trf("{m}m", "m", minutes);
     }
 
-    private static String seasons(int n) {
+    static String seasons(int n) {
         return n <= 0 ? null : Ui.plural("plural|one:{n} season|other:{n} seasons", n);
     }
 
@@ -1049,7 +1081,7 @@ final class Recs {
     }
 
     /** TV genres that TMDB returns in English even in other languages (pt-BR, es, de…). */
-    private static String genre(String name) {
+    static String genre(String name) {
         switch (name) {
             case "Action & Adventure": return Ui.tr("genre|Action & Adventure");
             case "Sci-Fi & Fantasy": return Ui.tr("genre|Sci-Fi & Fantasy");
@@ -1142,6 +1174,7 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = ((key().hashCode() * 31L + REGION.hashCode()) * 31L + (Prefs.hideAnimation() ? 1 : 0)) * 31L + Config.PLEX_URL.hashCode();
+        if (Jellyfin.configured()) stamp = stamp * 31L + Jellyfin.stamp(context);   // not set: the stamp as before
         if (stremio()) stamp = stamp * 31L + 1;   // off: the same stamp as before, so nothing is fetched again
         String nuvio = nuvio();
         if (nuvio != null) stamp = stamp * 31L + nuvio.hashCode();
@@ -1336,13 +1369,13 @@ final class Recs {
 
     private void download(Pick p) throws IOException {
         File f = imageFile(p);
-        if (!f.exists()) fetchFile(f, p.id < 0
+        if (!f.exists()) fetchFile(f, p.jellyfin ? Jellyfin.image(context, p.backdrop, false) : p.id < 0
                 ? plexOpen("/photo/:/transcode?width=1920&height=1080&minSize=1&url=" + URLEncoder.encode(p.backdrop, "UTF-8"))
                 : (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection());
         File poster = posterFile(p);
         if (poster == null || poster.exists()) return;
         try {   // the narrow cards: without a poster they crop the backdrop
-            fetchFile(poster, p.id < 0
+            fetchFile(poster, p.jellyfin ? Jellyfin.image(context, p.poster, true) : p.id < 0
                     ? plexOpen("/photo/:/transcode?width=500&height=750&minSize=1&url=" + URLEncoder.encode(p.poster, "UTF-8"))
                     : (HttpURLConnection) new URL(POSTERS + p.poster).openConnection());
         } catch (IOException e) {
@@ -1470,7 +1503,8 @@ final class Recs {
                         .put("poster", p.poster == null ? "" : p.poster).put("link", p.link == null ? "" : p.link)
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
                         .put("servicePkg", p.servicePkg == null ? "" : p.servicePkg)
-                        .put("tag", p.tag == null ? "" : p.tag).put("mine", p.mine).put("detailed", p.detailed));
+                        .put("tag", p.tag == null ? "" : p.tag).put("mine", p.mine).put("detailed", p.detailed)
+                        .put("jellyfin", p.jellyfin));
             }
             SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
                     .putString("traktActivity", traktActivity).putLong("traktStamp", traktStamp)
@@ -1504,6 +1538,7 @@ final class Recs {
             p.tag = o.optString("tag").isEmpty() ? null : o.optString("tag");
             p.mine = o.optInt("mine");
             p.detailed = o.optBoolean("detailed");
+            p.jellyfin = o.optBoolean("jellyfin");
             out.add(p);
         }
         return out;
