@@ -209,6 +209,7 @@ final class Recs {
     private volatile boolean fetching;
     private volatile String error = "";
     private volatile boolean light;     // light design: builds only the cards (all three tabs' cards fit in memory)
+    private volatile boolean cinema;    // the Cinema theme: also the sharp full-screen photo (Backdrop.image)
     private volatile long failedAt, keyStamp, traktStamp, linkRetryAt;
     private volatile String listLanguage = "";   // language used for the saved titles, genres and texts
     private volatile String traktActivity = "";  // Trakt's last change when the picks were fetched
@@ -617,6 +618,16 @@ final class Recs {
     void setLight(boolean value) {
         if (value == light) return;
         light = value;
+        synchronized (images) {
+            images.clear();
+            posters.clear();
+        }
+    }
+
+    /** The Cinema theme on or off: the ready images are built again (with or without the full-screen photo). */
+    void setCinema(boolean value) {
+        if (value == cinema) return;
+        cinema = value;
         synchronized (images) {
             images.clear();
             posters.clear();
@@ -1425,14 +1436,16 @@ final class Recs {
             Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
             if (b == null) throw new IOException("unreadable image");
             AppLog.w("backdrop \u201c" + p.title + "\u201d: " + bounds.outWidth + "×" + bounds.outHeight + " → " + Backdrop.W + "×" + Backdrop.H);
-            boolean forLight = light;
-            Backdrop backdrop = Backdrop.make(b, forLight);
-            if (forLight != light) return;   // the design changed midway: this one is stale
+            boolean forLight = light, forCinema = cinema;
+            Backdrop backdrop = Backdrop.make(b, forLight, false, forCinema);
+            if (forLight != light || forCinema != cinema) return;   // the design changed midway: this one is stale
             Poster poster = forLight ? loadPoster(p) : null;
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
                 if (poster != null) posters.put(p.backdrop, poster);
-                while (images.size() > (forLight ? Prefs.cards() + 7 : 4)) images.remove(images.keySet().iterator().next());
+                // Cinema's photos are full screen (a GPU texture each): only the one tab's cards, plus two.
+                int keep = !forLight ? 4 : forCinema ? Prefs.cards() + 2 : Prefs.cards() + 7;
+                while (images.size() > keep) images.remove(images.keySet().iterator().next());
                 posters.keySet().retainAll(images.keySet());
             }
             notifyListeners();

@@ -70,15 +70,20 @@ final class Backdrop {
     }
 
     static Backdrop make(Bitmap src, boolean forLight) {
-        return make(src, forLight, false);
+        return make(src, forLight, false, false);
+    }
+
+    static Backdrop make(Bitmap src, boolean forLight, boolean own) {
+        return make(src, forLight, own, false);
     }
 
     /**
      * `own`: one of your photos (Photos). Its background is less blurred than a pick's; behind the clock, date and
      * weather it is whitened (darkened at night) as much as a pick's, so the text stays readable, then less toward the
      * right, so it still reads as your photo. The glass and the drawer stay as they are.
+     * `cinema` (with forLight, the Cinema theme): also the sharp full-screen photo with its scrims (`image`).
      */
-    static Backdrop make(Bitmap src, boolean forLight, boolean own) {
+    static Backdrop make(Bitmap src, boolean forLight, boolean own, boolean cinema) {
         // Cropped to 16:9 at the source's resolution first, then filtered down (no step over 2×).
         Bitmap crop = center(src, (float) W / H);
         if (crop != src) src.recycle();
@@ -101,6 +106,12 @@ final class Backdrop {
             int[] lightGlass = whiten(glass.clone(), 0.74f);
             int[] night = darken(frost.clone(), 0.76f);
             int[] nightGlass = darken(glass, 0.56f);
+            if (cinema && !own) {
+                // Cinema: the photo itself, sharp and full screen, darkened where the title, the posters and the
+                // shelf sit (the left and the bottom) and faintly at the top, behind the buttons.
+                cinemaScrims(c);
+                return new Backdrop(gpu(out), frost, null, wide, light, lightGlass, night, nightGlass, light, night, FW, FH);
+            }
             if (own) {
                 int[] sharp = reduce(out, GW, GH, 1, 1);
                 int[] lightBg = ramp(sharp.clone(), 0.82f, 0.45f, true), nightBg = ramp(sharp, 0.76f, 0.5f, false);
@@ -136,6 +147,25 @@ final class Backdrop {
         int[] frost = reduce(out, FW, FH, 3, 3);
         int[] glass = reduce(out, GW, GH, 2, 2);
         return new Backdrop(gpu(out), frost, glass, null, null, null, null, null);
+    }
+
+    /**
+     * Cinema's scrims, in place: strong on the left (the title and its line, HomeView's C_ constants), deep at the
+     * bottom (the posters and the shelf) and faint at the top (the buttons); the right of the photo stays clear.
+     */
+    private static void cinemaScrims(Canvas c) {
+        Paint scrim = new Paint(Paint.DITHER_FLAG);
+        scrim.setShader(new LinearGradient(0, 0, W * 0.62f, 0,
+                new int[] {black(0.62f), black(0.44f), black(0.18f), black(0.04f), 0},
+                new float[] {0, 0.3f, 0.6f, 0.85f, 1}, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, W, H, scrim);
+        scrim.setShader(new LinearGradient(0, H, 0, H * 0.3f,
+                new int[] {black(0.88f), black(0.72f), black(0.4f), black(0.12f), 0},
+                new float[] {0, 0.3f, 0.6f, 0.85f, 1}, Shader.TileMode.CLAMP));
+        c.drawRect(0, H * 0.3f, W, H, scrim);
+        scrim.setShader(new LinearGradient(0, 0, 0, H * 0.2f, new int[] {black(0.36f), black(0.1f), 0},
+                new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, W, H * 0.2f, scrim);
     }
 
     /** How many times smaller the screensaver photo's frosted version is (the glass math uses the same number). */

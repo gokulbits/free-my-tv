@@ -172,7 +172,7 @@ The first values come from `config.properties`, created by the first build (Goog
 | `show_crypto` | Show Binance crypto prices on home and screensaver | `true` |
 | `currency` | Crypto prices in `USD`, `EUR`, `BRL`… | `USD` |
 | `temperature` | `C`, `F` or `auto` | `auto` |
-| `theme` | `auto` (dark from sunset to sunrise), `light` or `dark` | `auto` |
+| `theme` | `auto` (dark from sunset to sunrise), `light`, `dark` or `cinema` (Google TV: the focused pick fills the screen like the tvOS home screen, with a row of posters and the apps below; always dark) | `auto` |
 | `disable_assistant` | Also turn off Google Assistant | `false` |
 | `screensaver` | `false` keeps the TV's own screensaver: Free My TV then changes only the home screen and the promo apps (Google TV) | `true` |
 | `hide_services` | Streaming services to leave out of the picks even when their app is on the TV (`netflix`, `prime`, `disney`…), comma separated; for apps the TV ships that you don't subscribe to. On Google TV and Android TV, a service that TMDB lists in your country under the same name as an app on the TV also appears in *Picks from*, off until you switch it on. It is where the switches in Home Settings › Picks › Picks from start; what you switch on the TV wins. Google TV only | empty |

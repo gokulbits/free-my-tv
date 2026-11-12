@@ -121,6 +121,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float L_STATUS = 25, L_STATUS_GAP = 22;
     private static final String[] STATUS_SYMBOLS = {"wifi", "ethernet", "bluetooth", "usb"};
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
+    // Cinema theme (like the tvOS home screen): the focused pick's photo fills the screen, its title and line at the
+    // left (Backdrop's scrims sit behind them), a row of posters under them, then the shelf; the clock at the top left.
+    private static final float C_TITLE_BASE = 466, C_META_BASE = 518, C_TITLE_W = 1100;
+    private static final float C_POSTERS_TOP = 560, C_POSTER_W = 144, C_POSTER_H = 200, C_POSTER_GAP = 28;
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
     private static String[] tabs;
@@ -217,6 +221,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF[] cardRects = new RectF[Recs.MAX_CARDS];
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
     private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote;
+    private Paint cTitle, cMeta, cClock;   // Cinema: the focused pick's title and line, the clock
+    private boolean cinema;               // the Cinema theme (Prefs.cinema()), checked with the night look
     private Shader lightGradient;
     // Continue Watching: the background takes the focused card's colour (worked out once per picture, WatchArt), easing
     // from one to the next. Drawn as a plain fill under a fixed shade, so a colour change creates nothing per frame.
@@ -801,7 +807,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lightButtons.addAll(list);
         if (zone == Z_TOP && topIndex >= 3 + lightButtons.size()) {
             topIndex = 2 + lightButtons.size();
-            if (topIndex < 3 && !picksOn()) zone = Z_SHELF;   // without the picks the tabs can't hold focus
+            if (topIndex < 3 && (!picksOn() || cinema)) zone = Z_SHELF;   // without the picks (or in Cinema) the tabs can't hold focus
             else if (topIndex < 3) selectTab(topIndex);
             retarget(true);
         }
@@ -922,6 +928,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint}) p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
         lTitle = Ui.text(Ui.displaySemibold, 76 * k, L_INK);
         lTitle.setLetterSpacing(0.004f);
+        cTitle = Ui.text(Ui.displaySemibold, 84 * k, WHITE);
+        cMeta = Ui.text(Ui.medium, 28 * k, 0xD9FFFFFF);
+        cClock = Ui.numbers(Ui.medium, 30 * k, 0xE6FFFFFF);
+        for (Paint p : new Paint[] {cTitle, cMeta, cClock}) p.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
         lTab = Ui.text(Ui.medium, 30 * k, L_DIM);
         lTabOn = Ui.text(Ui.semibold, 30 * k, L_INK);
         lCardTitle = Ui.text(Ui.semibold, 31 * k, L_INK);
@@ -1337,6 +1347,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Day or night right now (from the sun at your location); `animate`: with the transition. */
     private void checkNight(boolean animate) {
+        checkCinema();
         boolean want = data.isNight(System.currentTimeMillis());
         if (want == nightTarget) return;
         nightTarget = want;
@@ -1348,6 +1359,38 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             nightAt = 0;
             nightChanged();
         }
+    }
+
+    /**
+     * The Cinema theme turned on or off (Home Settings > Theme): the pictures are built again (with or without the
+     * full-screen photo), the tabs go away (Explore only) and the cards become posters.
+     */
+    private void checkCinema() {
+        boolean want = Prefs.cinema();
+        if (want == cinema) return;
+        cinema = want;
+        recs.setCinema(want);
+        if (want && tab != 0) selectTab(0);
+        if (want && zone == Z_TOP && topIndex < 3) {   // the tabs are gone
+            zone = lightButtons.isEmpty() ? Z_SHELF : Z_TOP;
+            topIndex = 3;
+        }
+        bgTo = bgFrom = null;   // their images are the other design's
+        bgFadeAt = 0;
+        layoutLight();
+        if (lTab != null) {
+            neutralGlass();   // until the new pictures are in
+            updateCards();
+        }
+        heroDirty = statusDirty = drawerDirty = true;
+        sky.invalidate();
+        platter.invalidate();
+        wake();
+    }
+
+    /** Cinema's own layout: the theme on and the picks at the top (not Continue Watching or the clock). */
+    private boolean cinemaPicks() {
+        return cinema && picksMode();
     }
 
     /** Advances the day ⇄ night transition; true while it runs. */
@@ -3778,7 +3821,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             }
             case Z_TOP:
-                if (i >= 3 + lightButtons.size()) return false;
+                if (i >= 3 + lightButtons.size() || (i < 3 && cinema)) return false;   // Cinema has no tabs
                 a11yRect.set(topRects[i]);
                 dy = (i < 3 ? heroLayer : status).getTranslationY();
                 break;
@@ -3913,7 +3956,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 widgetIndex = i;
                 break;
             case Z_TOP:
-                if (i >= 3 + lightButtons.size() || (i < 3 && !picksMode())) return;
+                if (i >= 3 + lightButtons.size() || (i < 3 && (!picksMode() || cinema))) return;
                 if (drawerOpen) closeDrawer();
                 topIndex = i;
                 if (i < 3) selectTab(i);
@@ -4012,6 +4055,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
         float x = MARGIN * k - pad;
         for (int i = 0; i < 3; i++) {
+            if (cinema) {   // no tabs: nothing to point at or focus
+                topRects[i].setEmpty();
+                continue;
+            }
             float tw = Math.max(lTabOn.measureText(tabs()[i]), lTab.measureText(tabs()[i]));
             topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
             snap(topRects[i]);
@@ -4039,6 +4086,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The cards side by side: the one at cardIndex wide, the others tall, sliding as `cardOpen` moves. */
     private void layoutCards() {
+        if (cinemaPicks()) {   // Cinema: posters all the same size, in one row (six fit, so no scrolling)
+            float pw = C_POSTER_W * k, ph = C_POSTER_H * k, g = C_POSTER_GAP * k, x = MARGIN * k, y = C_POSTERS_TOP * k;
+            for (int i = 0; i < Recs.MAX_CARDS; i++) {
+                cardRects[i].set(x, y, x + pw, y + ph);
+                snap(cardRects[i]);
+                x += pw + g;
+            }
+            return;
+        }
         float top = L_CARDS_TOP * k, ch = L_CARD_H * k, g = L_CARD_GAP * k, tall = L_TALL_W * k;
         float wide = (CONTENT_R - MARGIN) * k - 2 * tall - 2 * g, x = MARGIN * k - cardScroll.value * (tall + g);
         for (int i = 0; i < Recs.MAX_CARDS; i++) {
@@ -4071,7 +4127,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // This tab's cards, then the first three of the others (what shows at first): switching tabs is quick, and
         // the images stay under Recs's cap in memory.
         for (Recs.Pick p : list) recs.backdrop(p);
-        for (int t = 0; t < TAB_KIND.length; t++) {
+        for (int t = 0; t < TAB_KIND.length && !cinema; t++) {   // Cinema has no other tabs (and keeps fewer images)
             if (t == tab) continue;
             List<Recs.Pick> other = recs.now(TAB_KIND[t]);
             for (int i = 0; i < Math.min(3, other.size()); i++) recs.backdrop(other.get(i));
@@ -4640,12 +4696,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {
+        if (cinema && b.image != null) {   // Cinema: the photo itself, sharp, with its scrims
+            drawImage(c, b.image, alpha);
+            return;
+        }
         if (night < 0.999f || b.nightImage == null) drawImage(c, b.lightImage, alpha);
         if (night > 0.001f) drawImage(c, b.nightImage, alpha * night);
     }
 
     private void drawLightTop(Canvas c) {
         applyTone();
+        if (cinemaPicks()) {
+            drawCinemaTop(c);
+            return;
+        }
         if (clockMode()) {
             titleRight = 0;
             drawClock(c);
@@ -4695,6 +4759,72 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean picksOn() {
         return Recs.hasKey(getContext());
+    }
+
+    // MARK: - Cinema theme
+
+    /**
+     * Cinema: the clock at the top left, then over the photo the focused pick's title (smaller to fit, then cut) and
+     * its line (why it's there, genre, length, the app), and the row of posters.
+     */
+    private void drawCinemaTop(Canvas c) {
+        float left = MARGIN * k;
+        c.drawText(clockText, left - Ui.leftBearing(cClock, clockText), L_BUTTON_CY * k + Ui.halfCap(cClock), cClock);
+        titleRight = left + cClock.measureText(clockText);
+        layoutCards();
+        Recs.Pick p = cards.isEmpty() ? null : cards.get(Math.min(cardIndex, cards.size() - 1));
+        if (p != null) {
+            float max = C_TITLE_W * k, size = 84 * k;
+            cTitle.setTextSize(size);
+            float tw = cTitle.measureText(p.title);
+            if (tw > max) cTitle.setTextSize(Math.max(56 * k, size * max / tw));   // long titles shrink a little first
+            fitPaint.set(cTitle);
+            String title = TextUtils.ellipsize(p.title, fitPaint, max, TextUtils.TruncateAt.END).toString();
+            c.drawText(title, left - Ui.leftBearing(cTitle, title), C_TITLE_BASE * k, cTitle);
+            if (p.meta != null && !p.meta.isEmpty()) {
+                fitPaint.set(cMeta);
+                c.drawText(TextUtils.ellipsize(p.meta, fitPaint, max, TextUtils.TruncateAt.END).toString(), left, C_META_BASE * k, cMeta);
+            }
+        }
+        int top = -1;
+        for (int i = 0; i < cardSlots; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
+        for (int i = 0; i < cardSlots; i++) if (i != top) drawCinemaCard(c, i);
+        if (top >= 0) drawCinemaCard(c, top);
+    }
+
+    /**
+     * A poster in Cinema's row: the pick's portrait (the backdrop cropped when it has none), rounded, with a soft
+     * shadow; focused, it grows and rises with a white rim (the tvOS focus). The others stay a little dimmer.
+     */
+    private void drawCinemaCard(Canvas c, int i) {
+        if (i >= cards.size()) return;
+        RectF base = cardRects[i];
+        Recs.Pick p = cards.get(i);
+        float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.1f * v;
+        float bw = base.width(), bh = base.height(), r0 = 14 * k, r = r0 * s;
+        float cx = base.centerX(), cy = base.centerY() - 10 * k * v;
+        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
+        tmp.set(cell);
+        tmp.offset(0, (8 + 14 * f) * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, 0.35f + 0.25f * f));
+        shadows.draw(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        Recs.Poster poster = recs.poster(p);
+        Backdrop b = recs.backdrop(p);
+        float alpha = 0.82f + 0.18f * f;
+        if (poster != null) coverImage(c, poster.bitmap, poster.shader, cell, r, alpha);
+        else if (b != null && b.wide != null) coverImage(c, b.wide, b.wideShader, cell, r, alpha);
+        else {
+            fill.setShader(null);
+            fill.setColor(0xFF2C2C2E);
+            c.drawRoundRect(cell, r, r, fill);
+        }
+        if (f > 0.01f) {
+            rim.setShader(null);
+            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * f));
+            rim.setStrokeWidth(3 * k);
+            c.drawRoundRect(cell, r, r, rim);
+            rim.setStrokeWidth(2.5f * k);
+        }
     }
 
     private void drawClock(Canvas c) {
@@ -4867,7 +4997,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int color = Ui.alpha(tone(L_INK, 0xEBFFFFFF), 0.85f);
         float x = MARGIN * k;
         // The top title ("For You", or "Continue Watching") is on this line too: the icons start after it, not on it.
-        if (!clockMode()) x += lTitle.measureText(picksMode() ? Ui.tr("For You") : Ui.tr("Continue Watching")) + gap;
+        if (cinemaPicks()) x += cClock.measureText(clockText) + gap;   // Cinema: the clock instead of the title
+        else if (!clockMode()) x += lTitle.measureText(picksMode() ? Ui.tr("For You") : Ui.tr("Continue Watching")) + gap;
         if (network != 0) x = drawStatusIcon(c, network == 2 ? "ethernet" : "wifi", x, height, gap, color);
         if (bluetoothConnected) x = drawStatusIcon(c, "bluetooth", x, height, gap, color);
         if (usbConnected) drawStatusIcon(c, "usb", x, height, gap, color);
@@ -4906,9 +5037,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     break;
                 }
                 if (cards.isEmpty()) {
-                    if (!picksOn() && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
+                    if ((!picksOn() || cinema) && lightButtons.isEmpty()) return true;   // no tabs and no buttons above
                     zone = Z_TOP;
-                    topIndex = picksMode() ? tab : 3;
+                    topIndex = picksMode() && !cinema ? tab : 3;
                 } else {
                     zone = Z_CARDS;
                     cardIndex = nearest(cardRects, cards.size(), shelf.isEmpty() ? w / 2f : tileRects[shelfIndex].centerX());
@@ -4920,6 +5051,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (next == cardIndex) return true;
                     cardIndex = next;
                 } else if (dy < 0) {
+                    if (cinema) {   // no tabs: up reaches the corner buttons
+                        if (lightButtons.isEmpty()) return true;
+                        zone = Z_TOP;
+                        topIndex = 3;
+                        break;
+                    }
                     zone = Z_TOP;
                     topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
                 } else {
@@ -4941,13 +5078,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 }
                 break;
             case Z_TOP:
-                if (dx != 0 && !picksMode() && topIndex + dx < 3) return true;   // no tabs to the left
+                boolean tabs = picksMode() && !cinema;
+                if (dx != 0 && !tabs && topIndex + dx < 3) return true;   // no tabs to the left
                 if (dy > 0 && !picksMode()) {
                     zone = continueMode() && !watching.isEmpty() ? Z_WATCH : Z_SHELF;
                     break;
                 }
                 if (dx != 0) {
-                    int next = Math.max(picksMode() ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
+                    int next = Math.max(tabs ? 0 : 3, Math.min(2 + lightButtons.size(), topIndex + dx));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < 3) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it

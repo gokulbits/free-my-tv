@@ -368,6 +368,13 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   (`org.jellyfin.androidtv`, VIEW with the bare id to its StartupActivity); neither VIEW filter is BROWSABLE, so
   `HomeApps.open` names the launch activity. Without any streaming service the list is Jellyfin's alone. No redirects
   are followed; the key is never logged.
+- The Cinema theme (`theme=cinema`, Home Settings > Theme; Google TV only, `Prefs.cinema()`): like the tvOS home
+  screen. Always the night look (`HomeData.isNight`); with picks, no title or tabs (Explore only; `topRects` 0 to 2
+  empty, never focused), the focused pick's photo sharp and full screen (`Backdrop.make(..., cinema)` adds `image`
+  with `cinemaScrims`), its title and line at the left and the cards as a row of posters (`drawCinemaTop`,
+  `layoutCards`, the `C_` constants), the clock at the top left. Those photos are GPU textures of the full screen, so
+  `Recs` keeps only `Prefs.cards() + 2` of them and HomeView doesn't prefetch other tabs. Continue Watching and the
+  clock look as in Dark.
 - Plain HTTP only to the user's own network: `build.sh` reads every server setting with `lan_server <key>` (now
   `immich_server`), which refuses an `http://` address that isn't private (10/8, 172.16/12, 192.168/16, `.local`,
   `.lan`, `.home.arpa`, a one-word name) and lists its host in the generated `network_security_config.xml`, the one
