@@ -58,6 +58,7 @@ final class Recs {
         boolean detailed;
         java.io.File photo;     // one of your own photos (Photos): no title, no caption
         boolean jellyfin;       // from your Jellyfin server: images from there, opens in Wholphin or Jellyfin's app
+        boolean youtube;        // a YouTube video (YouTubeRecs): opens in SmartTube or YouTube; never saved
     }
 
     interface Listener { void onRecs(); }
@@ -84,7 +85,9 @@ final class Recs {
     /** By subscription, with ads (Pluto TV) or free: never rent or buy. */
     private static final String WATCH_TYPES = "flatrate%7Cads%7Cfree";
     /** Images kept on disk: a backdrop and a poster for every title the list can hold. */
-    private static final int FILES = 2 * (POOL + TRAKT_MAX + Jellyfin.MAX);
+    private static final int FILES = 2 * (POOL + TRAKT_MAX + Jellyfin.MAX) + YouTubeRecs.PROGRESS_MAX + YouTubeRecs.RECS_MAX;
+    /** How often YouTube's lists are read again (a local query; only new stills are downloaded). */
+    private static final long YOUTUBE_EVERY = 5 * 60_000L;
     /** Pick.mine: what they're in the middle of, and what they'd like (watchlist, Trakt's or Jellyfin's recommendations). */
     static final int PROGRESS = 1, LIKED = 2;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
@@ -170,6 +173,7 @@ final class Recs {
         SERVICE_NAME.put("wink", "Wink");
         SERVICE_NAME.put("plex", "Plex");
         SERVICE_NAME.put("jellyfin", "Jellyfin");
+        SERVICE_NAME.put(YouTubeRecs.KEY, "YouTube");
     }
     /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
     static final String REGION = Place.region();
@@ -210,6 +214,11 @@ final class Recs {
     private volatile String error = "";
     private volatile boolean light;     // light design: builds only the cards (all three tabs' cards fit in memory)
     private volatile boolean cinema;    // the Cinema theme: also the sharp full-screen photo (Backdrop.image)
+    /** YouTube's picks (YouTubeRecs), read apart from the list: they change as you watch. */
+    private volatile List<Pick> youtube = new ArrayList<>();
+    private volatile boolean youtubeFetching;
+    private long youtubeAt;
+    private boolean youtubeGrantAsked;
     private volatile long failedAt, keyStamp, traktStamp, linkRetryAt;
     private volatile String listLanguage = "";   // language used for the saved titles, genres and texts
     private volatile String traktActivity = "";  // Trakt's last change when the picks were fetched
@@ -369,7 +378,12 @@ final class Recs {
         if (!hasKey(context)) return out;    // no TMDB key: no recommendations
         List<Pick> progress = new ArrayList<>(), liked = new ArrayList<>(), list = new ArrayList<>();
         Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
-        for (Pick p : picks) {
+        List<Pick> from = picks, tube = youtube;
+        if (!tube.isEmpty() && !Prefs.serviceOff(YouTubeRecs.KEY)) {   // YouTube's (YouTubeRecs) after the list's: in progress and liked like Trakt's
+            from = new ArrayList<>(from);
+            from.addAll(tube);
+        }
+        for (Pick p : from) {
             if ((kind == null || kind.equals(p.kind))
                     && (!p.detailed || (p.pkg != null && have.computeIfAbsent(p.pkg, this::installed)
                     && (p.servicePkg == null || have.computeIfAbsent(p.servicePkg, this::installed))))) {   // app missing or switched off: skip
@@ -406,7 +420,7 @@ final class Recs {
 
     /** Plex's (negative ids, as Jellyfin's, which are no surprise but what you asked for). */
     private static boolean plex(Pick p) {
-        return p.id < 0 && !p.jellyfin;
+        return p.id < 0 && !p.jellyfin && !p.youtube;
     }
 
     /** "Law & Order: Special Victims Unit" → "law & order" (what comes before ":" or " - "). */
@@ -543,6 +557,7 @@ final class Recs {
 
     /** With a key: fetches the list if stale or the time of day (morning/afternoon/night) changed; then the details. */
     void refreshIfStale() {
+        if (hasKey(context)) refreshYouTube();
         if (!hasKey(context) || fetching) return;
         long now = System.currentTimeMillis();
         long stamp = sourceStamp();   // a new key, country, animation choice or installed streaming-app set refetches
@@ -610,6 +625,52 @@ final class Recs {
                 fetching = false;
                 writeStatus();
                 notifyListeners();
+            }
+        });
+    }
+
+    /**
+     * YouTube's picks (YouTubeRecs) again when they're older than YOUTUBE_EVERY. They read Android TV's lists, so the
+     * first time it asks for READ_TV_LISTINGS through the TV's ADB, as picking Continue Watching does.
+     */
+    private void refreshYouTube() {
+        if (youtubeFetching) return;
+        long now = System.currentTimeMillis();
+        if (youtubeAt != 0 && now >= youtubeAt && now - youtubeAt < YOUTUBE_EVERY) return;
+        youtubeAt = now;
+        if (!YouTubeRecs.wanted(context)) {   // switched off in Picks from, or neither app on the TV
+            if (!youtube.isEmpty()) {
+                youtube = new ArrayList<>();
+                notifyListeners();
+            }
+            return;
+        }
+        if (!WatchNext.allowed(context)) {
+            if (!youtubeGrantAsked) {
+                youtubeGrantAsked = true;
+                AppLog.w("youtube: asking for READ_TV_LISTINGS");
+                HomeMode.requestWatchGrant(context);
+            }
+            youtubeAt = now - YOUTUBE_EVERY + 30_000L;   // look again in 30 s
+            return;
+        }
+        youtubeFetching = true;
+        io.execute(() -> {
+            try {
+                YouTubeRecs.Lists l = YouTubeRecs.load(context);
+                List<Pick> list = new ArrayList<>(withImages(l.progress));
+                list.addAll(withImages(l.recommended));
+                AppLog.w("youtube: " + l.progress.size() + " in progress, " + l.recommended.size() + " recommended");
+                boolean same = list.size() == youtube.size();
+                for (int i = 0; same && i < list.size(); i++) same = key(list.get(i)).equals(key(youtube.get(i)));
+                if (!same) {
+                    youtube = list;
+                    notifyListeners();
+                }
+            } catch (RuntimeException e) {
+                AppLog.w("youtube: " + e);
+            } finally {
+                youtubeFetching = false;
             }
         });
     }
@@ -963,7 +1024,7 @@ final class Recs {
                 download(pick);
                 out.add(pick);
             } catch (IOException e) {
-                AppLog.w((pick.jellyfin ? "jellyfin" : "plex") + " image: " + e.getMessage());
+                AppLog.w((pick.jellyfin ? "jellyfin" : pick.youtube ? "youtube" : "plex") + " image: " + e.getMessage());
             }
         }
         return out;
@@ -1154,6 +1215,8 @@ final class Recs {
         for (String[] s : readByName(c)) {
             if (HomeApps.launchIntent(c.getPackageManager(), s[2]) != null && seen.add(s[1])) out.add(new String[] {s[1], s[3]});
         }
+        // YouTube's own picks for your account (YouTubeRecs), with SmartTube or the YouTube app on the TV.
+        if (YouTubeRecs.client(c) != null && seen.add(YouTubeRecs.KEY)) out.add(new String[] {YouTubeRecs.KEY, "YouTube"});
         return out;
     }
 
@@ -1380,6 +1443,15 @@ final class Recs {
 
     private void download(Pick p) throws IOException {
         File f = imageFile(p);
+        if (p.youtube) {   // YouTube's 1280×720 still, else the 480×360 one every video has (16:9 inside 4:3 bars)
+            if (f.exists()) return;
+            try {
+                fetchFile(f, (HttpURLConnection) new URL(p.backdrop).openConnection());
+            } catch (IOException e) {
+                fetchFile(f, (HttpURLConnection) new URL(p.backdrop.replace("maxresdefault", "hqdefault")).openConnection());
+            }
+            return;
+        }
         if (!f.exists()) fetchFile(f, p.jellyfin ? Jellyfin.image(context, p.backdrop, false) : p.id < 0
                 ? plexOpen("/photo/:/transcode?width=1920&height=1080&minSize=1&url=" + URLEncoder.encode(p.backdrop, "UTF-8"))
                 : (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection());
@@ -1437,9 +1509,14 @@ final class Recs {
             if (b == null) throw new IOException("unreadable image");
             AppLog.w("backdrop \u201c" + p.title + "\u201d: " + bounds.outWidth + "×" + bounds.outHeight + " → " + Backdrop.W + "×" + Backdrop.H);
             boolean forLight = light, forCinema = cinema;
+            Poster tile = null;
+            if (p.youtube) {   // a video's still: without the film's black bars, and its card 16:9 (no poster)
+                b = trimBars(b);
+                tile = new Poster(Backdrop.card(b, Backdrop.CLIP_W, Backdrop.CLIP_H));
+            }
             Backdrop backdrop = Backdrop.make(b, forLight, false, forCinema);
             if (forLight != light || forCinema != cinema) return;   // the design changed midway: this one is stale
-            Poster poster = forLight ? loadPoster(p) : null;
+            Poster poster = forLight ? (tile != null ? tile : loadPoster(p)) : null;
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
                 if (poster != null) posters.put(p.backdrop, poster);
@@ -1457,6 +1534,34 @@ final class Recs {
     }
 
     /** The poster at the narrow card's size, or null (not downloaded yet or unreadable). */
+    /**
+     * YouTube's stills of wide films (and every 480×360 one) carry black bars: the rows at the top and bottom where
+     * almost nothing is lit go. The image itself when there are none.
+     */
+    private static Bitmap trimBars(Bitmap b) {
+        int w = b.getWidth(), h = b.getHeight();
+        int[] row = new int[w];
+        int top = 0, bottom = h;
+        while (top < h / 3 && darkRow(b, row, top)) top++;
+        while (bottom > h * 2 / 3 && darkRow(b, row, bottom - 1)) bottom--;
+        if (top < 4 && h - bottom < 4) return b;
+        Bitmap out = Bitmap.createBitmap(b, 0, top, w, bottom - top);
+        if (out != b) b.recycle();
+        return out;
+    }
+
+    /** Fewer than 1 in 50 of the row's sampled pixels brighter than near black. */
+    private static boolean darkRow(Bitmap b, int[] row, int y) {
+        int w = b.getWidth();
+        b.getPixels(row, 0, w, 0, y, w, 1);
+        int lit = 0, n = 0;
+        for (int i = 0; i < w; i += 4, n++) {
+            int c = row[i];
+            if (((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255) > 3 * 32) lit++;
+        }
+        return lit * 50 < n;
+    }
+
     private Poster loadPoster(Pick p) {
         File f = posterFile(p);
         if (f == null || !f.exists()) return null;

@@ -4086,12 +4086,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The cards side by side: the one at cardIndex wide, the others tall, sliding as `cardOpen` moves. */
     private void layoutCards() {
-        if (cinemaPicks()) {   // Cinema: posters all the same size, in one row (six fit, so no scrolling)
-            float pw = C_POSTER_W * k, ph = C_POSTER_H * k, g = C_POSTER_GAP * k, x = MARGIN * k, y = C_POSTERS_TOP * k;
+        if (cinemaPicks()) {
+            // Cinema: posters in one row, YouTube's videos as 16:9 cards of the same height. When they don't all fit,
+            // the row slides so the focused one (or the last one focused) is in full view.
+            float pw = C_POSTER_W * k, ph = C_POSTER_H * k, g = C_POSTER_GAP * k, y = C_POSTERS_TOP * k;
+            float x = 0, right = (CONTENT_R - MARGIN) * k, shift = 0;
+            int at = Math.min(cardIndex, Math.max(0, cards.size() - 1));
             for (int i = 0; i < Recs.MAX_CARDS; i++) {
-                cardRects[i].set(x, y, x + pw, y + ph);
+                float cw = i < cards.size() && cards.get(i).youtube ? ph * 16 / 9 : pw;
+                cardRects[i].set(x, y, x + cw, y + ph);
+                if (i == at) shift = Math.max(0, x + cw - right);
+                x += cw + g;
+            }
+            for (int i = 0; i < Recs.MAX_CARDS; i++) {
+                cardRects[i].offset(MARGIN * k - shift, 0);
                 snap(cardRects[i]);
-                x += pw + g;
             }
             return;
         }
@@ -4799,6 +4808,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawCinemaCard(Canvas c, int i) {
         if (i >= cards.size()) return;
         RectF base = cardRects[i];
+        if (base.right < 0 || base.left > getWidth()) return;   // slid off screen
         Recs.Pick p = cards.get(i);
         float v = cardFocus[i].value, f = Ui.clamp(v), s = 1 + 0.1f * v;
         float bw = base.width(), bh = base.height(), r0 = 14 * k, r = r0 * s;

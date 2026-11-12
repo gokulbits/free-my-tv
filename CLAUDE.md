@@ -325,7 +325,8 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
 - Continue Watching gets `READ_TV_LISTINGS` with `pm grant` through the TV's own ADB only when picked in Home Settings;
   *Original* revokes it with `pm revoke`. Watch Next pictures load only from the TV (`content://`, `android.resource://`),
   never from the network. The app talks only to TMDB, Open-Meteo, Binance, Watchmode (with a `watchmode_key`), your Plex
-  server (with a `plex_url`), your Jellyfin server (with `jellyfin_url` and its key), your Immich server (with `immich_server` and its key), Trakt (with a `trakt_client_id`,
+  server (with a `plex_url`), your Jellyfin server (with `jellyfin_url` and its key), YouTube's stills
+  (`i.ytimg.com`, `YouTubeRecs`), your Immich server (with `immich_server` and its key), Trakt (with a `trakt_client_id`,
   once the person signs in on the TV) and GitHub's releases (Updates): new sources (such as Stremio) must not add
   network calls without the owner's OK.
 - Trakt (`Trakt`, Google TV only) needs the person's own API app: `trakt_client_id` (the Client ID only: device code
@@ -368,6 +369,17 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   (`org.jellyfin.androidtv`, VIEW with the bare id to its StartupActivity); neither VIEW filter is BROWSABLE, so
   `HomeApps.open` names the launch activity. Without any streaming service the list is Jellyfin's alone. No redirects
   are followed; the key is never logged.
+- YouTube's picks (`YouTubeRecs`, Google TV only; Home Settings > Picks from > YouTube, key `youtube`, on by
+  default with SmartTube or YouTube installed): what the YouTube apps (`YOUTUBE`) and SmartTube (`SMARTTUBE`'s
+  builds) write to TvContract, read with READ_TV_LISTINGS (asked for through `HomeMode.requestWatchGrant`, as
+  Continue Watching does; *Original* revokes it). Their Watch Next entries are `PROGRESS` picks, their preview
+  channels (and Watch Next's watchlist) `LIKED` ones, videos only (an 11-character id from the provider id, content
+  id or intent). `Recs` keeps them apart from the saved list (`youtube`, read every `YOUTUBE_EVERY`, never saved),
+  merged in `now()`, kind `video` (Explore only). The still is `i.ytimg.com`'s maxresdefault, else hqdefault, with
+  black bars trimmed (`trimBars`) and a 16:9 card as its poster (`Backdrop.CLIP_W`; Cinema draws those 16:9 and
+  slides the row when it overflows). They open `https://www.youtube.com/watch?v=<id>` in SmartTube when installed,
+  else YouTube (both take that link). SmartTube publishes channels only when a stock TV launcher is installed
+  (`Helpers.isAndroidTVLauncher`), which it is in Free My TV mode (disabled, not removed).
 - The Cinema theme (`theme=cinema`, Home Settings > Theme; Google TV only, `Prefs.cinema()`): like the tvOS home
   screen. Always the night look (`HomeData.isNight`); with picks, no title or tabs (Explore only; `topRects` 0 to 2
   empty, never focused), the focused pick's photo sharp and full screen (`Backdrop.make(..., cinema)` adds `image`

@@ -28,6 +28,8 @@ final class Backdrop {
     static final int W = ui(1920), H = ui(1080), FW = 192, FH = 108, GW = 480, GH = 270;
     /** The card at its focused size (1.05×) and the narrow one (from the poster). */
     static final int WIDE_W = ui(1092), WIDE_H = ui(464), TALL_W = ui(336), TALL_H = ui(464);
+    /** A YouTube video's card: 16:9, at Cinema's focused size. */
+    static final int CLIP_W = ui(400), CLIP_H = ui(225);
 
     private static float uiScale() {
         android.util.DisplayMetrics m = android.content.res.Resources.getSystem().getDisplayMetrics();
